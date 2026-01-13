@@ -1,0 +1,35 @@
+replicaCount: 1
+
+image:
+  repository: wizdemoacr000897.azurecr.io/dixondalmeida/tasky
+  tag: "main"
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+
+service:
+  type: LoadBalancer
+  port: 8080
+  # annotations:
+  #   service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+
+ingress:
+  enabled: false
+  annotations: {}
+  hosts:
+    - host: chart-example.local
+      paths: []
+  tls: []
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+env:
+  SECRET_KEY: <secret>
+  MONGODB_URI: mongodb_url
