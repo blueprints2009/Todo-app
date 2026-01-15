@@ -1,0 +1,136 @@
+name: Application CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'application/**'
+      - 'kubernetes/**'
+      - '.github/workflows/app-cicd.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'application/**'
+      - 'kubernetes/**'
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  AWS_REGION: us-east-1
+  EKS_CLUSTER_NAME: demo-eks
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    # outputs:
+    #   image_tag: ${{ steps.image.outputs.image }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & tag Docker image
+        working-directory: ./application
+        run: |
+          ECR_REGISTRY="${{ secrets.ECR_REGISTRY }}"
+          IMAGE_TAG="${GITHUB_SHA}"
+          echo "Building image: ${ECR_REGISTRY}:${IMAGE_TAG}"
+          docker build -t "${ECR_REGISTRY}:${IMAGE_TAG}" .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ secrets.ECR_REGISTRY }}:${{ github.sha }}"
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: 0
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Push image to ECR
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          ECR_REGISTRY="${{ secrets.ECR_REGISTRY }}"
+          IMAGE_TAG="${GITHUB_SHA}"
+          docker push "${ECR_REGISTRY}:${IMAGE_TAG}"
+          echo "Image pushed successfully"
+
+  deploy:
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.EKS_CLUSTER_NAME }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Deploy to EKS
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        run: |
+          export ECR_REGISTRY="${{ secrets.ECR_REGISTRY }}"
+          export IMAGE_TAG="${GITHUB_SHA}"
+          export MONGODB_URI="${{ secrets.MONGODB_URI }}"
+
+          echo "Deploying image: ${ECR_REGISTRY}:${IMAGE_TAG}"    
+
+          kubectl apply -f kubernetes/Namespace.yml
+          kubectl apply -f kubernetes/service-account.yml
+          kubectl apply -f kubernetes/Rbac.yml
+
+          envsubst '${ECR_REGISTRY} ${IMAGE_TAG} ${MONGODB_URI}' \
+          < kubernetes/Deployment.yml | kubectl apply -f -
+
+          kubectl rollout status deployment/todoapp -n todoapp --timeout=5m
+          
+          kubectl apply -f kubernetes/service.yml
+          kubectl apply -f kubernetes/ingress.yml
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/todoapp -n todoapp --timeout=5m
+
+      - name: Get Ingress URL
+        id: ingress
+        run: |
+          sleep 10
+          # Get NGINX Ingress Controller NLB
+          INGRESS_URL=$(kubectl get svc -n ingress-nginx ingress-nginx-controller \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "pending")
+          echo "url=$INGRESS_URL" >> $GITHUB_OUTPUT
+          echo "Application URL: http://$INGRESS_URL"
+
+ 
