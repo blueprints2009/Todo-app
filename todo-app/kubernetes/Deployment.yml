@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: todoapp
+  namespace: todoapp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: todoapp
+  template:
+    metadata:
+      labels:
+        app: todoapp
+    spec:
+      serviceAccountName: todoapp-sa
+      containers:
+      - name: todoapp
+        image: "${ECR_REGISTRY}:${IMAGE_TAG}"
+        ports:
+        - containerPort: 8080
+        env:
+        - name: MONGODB_URI
+          value: "${MONGODB_URI}"
+        - name: NODE_ENV
+          value: "production"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
