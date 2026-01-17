@@ -1,5 +1,5 @@
 # Wiz-Exercise
-# Docker  
+# Docker   
 A Dockerfile has been provided to run this application.  The default port exposed is 8080.
 
 # Environment Variables
@@ -11,7 +11,7 @@ The following environment variables are needed.
 
 Alternatively, you can create a `.env` file and load it up with the environment variables.
 
-# Running with Go
+# Running with Go 
 
 Clone the repository into a directory of your choice Run the command `go mod tidy` to download the necessary packages.
 
